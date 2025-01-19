@@ -20,11 +20,55 @@ const sizeSlider = document.getElementById('size');
 const sizeLabel = document.getElementById('size-value');
 const scaleSlider = document.getElementById('scale');
 const scaleLabel = document.getElementById('scale-value');
+const cameraSelect = document.getElementById('camera-select'); // Nuevo elemento para selección de cámara
 
 function setStreamSize(width, height) {
     video.width = canvas.width = Math.round(width);
     video.height = canvas.height = Math.round(height);
 }
+
+async function initializeCamera(deviceId) {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: { deviceId: deviceId ? { exact: deviceId } : undefined },
+        });
+
+        video.srcObject = stream;
+        video.play();
+
+        const videoTrack = stream.getVideoTracks()[0];
+        const { width, height } = videoTrack.getSettings();
+
+        setStreamSize(width * scale, height * scale);
+
+        const ar = width / height;
+        const [cw, ch] = ar > 720 / 405 ? [720, 720 / ar] : [405 * ar, 405];
+        container.style.width = `${cw}px`;
+        container.style.height = `${ch}px`;
+
+        window.requestAnimationFrame(updateCanvas);
+    } catch (error) {
+        alert('Error accessing camera: ' + error.message);
+    }
+}
+
+async function populateCameraOptions() {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const videoDevices = devices.filter(device => device.kind === 'videoinput');
+
+    cameraSelect.innerHTML = videoDevices
+        .map((device, index) => `<option value="${device.deviceId}">${device.label || `Camera ${index + 1}`}</option>`)
+        .join('');
+
+    if (videoDevices.length > 0) {
+        await initializeCamera(videoDevices[0].deviceId);
+    }
+}
+
+cameraSelect.addEventListener('change', async () => {
+    const selectedCameraId = cameraSelect.value;
+    await initializeCamera(selectedCameraId);
+});
 
 status.textContent = 'Loading model...';
 
@@ -68,16 +112,12 @@ const COLOURS = [
     "#18A35D", "#F59E0B", "#4059BE",
     "#6027A5", "#D63D60", "#00AC9B",
     "#E64A19", "#272A34"
-]
+];
 
-// Render a bounding box and label on the image
 function renderBox([xmin, ymin, xmax, ymax, score, id], [w, h]) {
-    if (score < threshold) return; // Skip boxes with low confidence
+    if (score < threshold) return;
 
-    // Generate a random color for the box
     const color = COLOURS[id % COLOURS.length];
-
-    // Draw the box
     const boxElement = document.createElement('div');
     boxElement.className = 'bounding-box';
     Object.assign(boxElement.style, {
@@ -86,9 +126,8 @@ function renderBox([xmin, ymin, xmax, ymax, score, id], [w, h]) {
         top: 100 * ymin / h + '%',
         width: 100 * (xmax - xmin) / w + '%',
         height: 100 * (ymax - ymin) / h + '%',
-    })
+    });
 
-    // Draw label
     const labelElement = document.createElement('span');
     labelElement.textContent = `${model.config.id2label[id]} (${(100 * score).toFixed(2)}%)`;
     labelElement.className = 'bounding-box-label';
@@ -108,15 +147,12 @@ function updateCanvas() {
     if (!isProcessing) {
         isProcessing = true;
         (async function () {
-            // Read the current frame from the video
             const pixelData = context.getImageData(0, 0, width, height).data;
             const image = new RawImage(pixelData, width, height, 4);
 
-            // Process the image and run the model
             const inputs = await processor(image);
             const { outputs } = await model(inputs);
 
-            // Update UI
             overlay.innerHTML = '';
 
             const sizes = inputs.reshaped_input_sizes[0].reverse();
@@ -134,27 +170,4 @@ function updateCanvas() {
     window.requestAnimationFrame(updateCanvas);
 }
 
-// Start the video stream
-navigator.mediaDevices.getUserMedia(
-    { video: true }, // Ask for video
-).then((stream) => {
-    // Set up the video and canvas elements.
-    video.srcObject = stream;
-    video.play();
-
-    const videoTrack = stream.getVideoTracks()[0];
-    const { width, height } = videoTrack.getSettings();
-
-    setStreamSize(width * scale, height * scale);
-
-    // Set container width and height depending on the image aspect ratio
-    const ar = width / height;
-    const [cw, ch] = (ar > 720 / 405) ? [720, 720 / ar] : [405 * ar, 405];
-    container.style.width = `${cw}px`;
-    container.style.height = `${ch}px`;
-
-    // Start the animation loop
-    window.requestAnimationFrame(updateCanvas);
-}).catch((error) => {
-    alert(error);
-});
+populateCameraOptions();
